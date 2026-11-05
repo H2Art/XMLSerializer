@@ -92,19 +92,23 @@ public class Main extends Application {
 
     // ---------- дерево объекта ----------
 
-    private void show(Object o) {
+    private void show(Object o) throws Exception {
         current = o;
         TreeItem<Prop> root = build(new Prop("root", null, null, -1, Object.class, o), new IdentityHashMap<>());
         tree.setRoot(root);
     }
 
-    private TreeItem<Prop> build(Prop p, IdentityHashMap<Object, Integer> ids) {
+    private TreeItem<Prop> build(Prop p, IdentityHashMap<Object, Integer> ids) throws Exception {
         TreeItem<Prop> item = new TreeItem<>(p);
         item.setExpanded(true);
         Object v = p.value();
         if (v == null || XmlSerializer.isSimple(v.getClass())) return item;
         Integer seen = ids.get(v);
-        if (seen != null) { p.ref = seen; return item; }
+        if (seen != null) {
+            p.ref = seen;
+            p.refText = XmlSerializer.label(v);
+            return item;
+        }
         p.id = ids.size() + 1;
         ids.put(v, p.id);
         if (v.getClass().isArray()) {
@@ -162,6 +166,7 @@ public class Main extends Application {
         final int index;
         final Class<?> declared;
         int id, ref;
+        String refText;
 
         Prop(String label, Object owner, Field field, int index, Class<?> declared, Object root) {
             this.label = label; this.owner = owner; this.field = field;
@@ -197,7 +202,7 @@ public class Main extends Application {
 
         @Override
         public String toString() {
-            if (ref > 0) return label + " → #" + ref;
+            if (ref > 0) return label + " → #" + ref + (refText != null ? " (" + refText + ")" : "");
             Object v = value();
             if (v == null) return label + " = null";
             Class<?> c = v.getClass();

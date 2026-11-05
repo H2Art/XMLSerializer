@@ -15,7 +15,7 @@ import java.util.*;
 public final class XmlSerializer {
     private XmlSerializer() {}
 
-    private static final Set<String> RESERVED = Set.of("id", "idref", "type", "nil");
+    private static final Set<String> RESERVED = Set.of("id", "idref", "type", "nil", "label");
 
     // ---------- публичный API ----------
 
@@ -73,6 +73,19 @@ public final class XmlSerializer {
     public static String name(Field f) {
         String n = f.getAnnotation(XmlField.class).name();
         return n.isEmpty() ? f.getName() : n;
+    }
+
+    public static String label(Object v) throws Exception {
+        if (v == null || v.getClass().isArray()) return null;
+        for (Field f : fields(v.getClass())) {
+            if (!f.getAnnotation(XmlField.class).label()) continue;
+            Object val = f.get(v);
+            if (val == null) return null;
+            if (!isSimple(val.getClass()))
+                throw new IllegalArgumentException("label=true допустим только для простых значений: " + f);
+            return val.toString();
+        }
+        return null;
     }
 
     public static Object newInstance(Class<?> c) throws Exception {
@@ -149,7 +162,10 @@ public final class XmlSerializer {
             }
             Integer old = ids.get(v);
             if (old != null) {
-                sb.append(pad).append('<').append(tag).append(" idref=\"").append(old).append("\"/>\n");
+                sb.append(pad).append('<').append(tag).append(" idref=\"").append(old).append('"');
+                String lbl = label(v);
+                if (lbl != null) sb.append(" label=\"").append(esc(lbl)).append('"');
+                sb.append("/>\n");
                 return;
             }
             int id = ids.size() + 1;

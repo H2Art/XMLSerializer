@@ -76,6 +76,20 @@ class XmlSerializerTest {
         public ReservedAttr() {}
     }
 
+    public static class Labeled {
+        @XmlField(label = true) public String title;
+        @XmlField public Labeled other;
+        @XmlField public Labeled[] list;
+        public Labeled() {}
+        public Labeled(String t) { this.title = t; }
+    }
+
+    public static class BadLabel {
+        @XmlField(label = true) public Node n = new Node("x");
+        @XmlField public BadLabel self;
+        public BadLabel() {}
+    }
+
     // ---------- вспомогательное ----------
 
     @SuppressWarnings("unchecked")
@@ -375,5 +389,53 @@ class XmlSerializerTest {
     @Test @DisplayName("У корня нет type")
     void missingTypeOnRoot() {
         assertThrows(IllegalArgumentException.class, () -> XmlSerializer.deserialize("<root/>"));
+    }
+
+    // ---------- label у idref ----------
+
+    @Test @DisplayName("idref содержит label из поля с label=true (в т.ч. в массиве)")
+    void labelOnIdref() throws Exception {
+        Labeled a = new Labeled("A");
+        Labeled b = new Labeled("B");
+        a.other = b;
+        b.other = a;
+        a.list = new Labeled[]{b, a};
+        String xml = XmlSerializer.serialize(a);
+        assertTrue(xml.contains("idref=\"1\" label=\"A\""));
+        assertTrue(xml.contains("idref=\"2\" label=\"B\""));
+        Labeled r = rt(a);
+        assertSame(r, r.other.other);
+        assertSame(r.other, r.list[0]);
+    }
+
+    @Test @DisplayName("label экранируется")
+    void labelEscaped() throws Exception {
+        Labeled a = new Labeled("<x & \"y\">");
+        a.other = a;
+        String xml = XmlSerializer.serialize(a);
+        assertTrue(xml.contains("label=\"&lt;x &amp; &quot;y&quot;&gt;\""));
+        assertEquals("<x & \"y\">", rt(a).title);
+    }
+
+    @Test @DisplayName("Если label-поле null, атрибут не пишется")
+    void labelNullOmitted() throws Exception {
+        Labeled a = new Labeled();
+        a.other = a;
+        assertTrue(XmlSerializer.serialize(a).contains("<other idref=\"1\"/>"));
+    }
+
+    @Test @DisplayName("label=true на сложном поле дает ошибку")
+    void labelOnComplexField() {
+        BadLabel b = new BadLabel();
+        b.self = b;
+        assertThrows(IllegalArgumentException.class, () -> XmlSerializer.serialize(b));
+    }
+
+    @Test @DisplayName("При чтении label игнорируется")
+    void labelIgnoredOnRead() throws Exception {
+        String xml = "<root id=\"1\" type=\"xml.XmlSerializerTest$Labeled\">"
+                + "<title>A</title><other idref=\"1\" label=\"WRONG\"/></root>";
+        Labeled r = XmlSerializer.deserialize(xml, Labeled.class);
+        assertSame(r, r.other);
     }
 }
