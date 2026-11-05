@@ -15,10 +15,14 @@ import xml.XmlSerializer;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.IdentityHashMap;
+import java.util.Optional;
 
 public class Main extends Application {
     interface Action { void run() throws Exception; }
+
+    private static final int MAX_ARRAY = 10_000;
 
     private final TreeView<Prop> tree = new TreeView<>();
     private final TextArea xml = new TextArea();
@@ -114,6 +118,42 @@ public class Main extends Application {
         return item;
     }
 
+    // ---------- создание объектов и массивов ----------
+
+    private Optional<String> prompt(String title, String def) {
+        TextInputDialog d = new TextInputDialog(def);
+        d.setTitle(title);
+        d.setHeaderText(title);
+        return d.showAndWait();
+    }
+
+    private static boolean isConcrete(Class<?> c) {
+        return c != Object.class && !c.isInterface() && !Modifier.isAbstract(c.getModifiers());
+    }
+
+    /** Подставляет в null-поле (или null-элемент массива) новый массив либо объект. */
+    private void create(Prop p) throws Exception {
+        if (p.declared.isArray()) {
+            Optional<String> r = prompt("Длина массива", "0");
+            if (r.isEmpty()) return;
+            int n = Integer.parseInt(r.get().trim());
+            if (n < 0 || n > MAX_ARRAY)
+                throw new IllegalArgumentException("Длина должна быть от 0 до " + MAX_ARRAY);
+            p.setValue(Array.newInstance(p.declared.getComponentType(), n));
+        } else {
+            String def = isConcrete(p.declared) ? p.declared.getName() : "";
+            Optional<String> r = prompt("Полное имя класса", def);
+            if (r.isEmpty()) return;
+            Class<?> c = Class.forName(r.get().trim());
+            if (!p.declared.isAssignableFrom(c))
+                throw new IllegalArgumentException(c.getName() + " не подходит к типу " + p.declared.getName());
+            if (c.isArray() || XmlSerializer.isSimple(c) || XmlSerializer.fields(c).isEmpty())
+                throw new IllegalArgumentException("Нужен класс с полями @XmlField: " + c.getName());
+            p.setValue(XmlSerializer.newInstance(c));
+        }
+        show(current);
+    }
+
     /** Узел дерева: поле объекта, элемент массива или корень. */
     static final class Prop {
         final String label;
@@ -146,10 +186,13 @@ public class Main extends Application {
 
         String raw() { Object v = value(); return v == null ? "" : v.toString(); }
 
+        void setValue(Object nv) throws IllegalAccessException {
+            if (field != null) field.set(owner, nv); else Array.set(owner, index, nv);
+        }
+
         void set(String text) throws Exception {
             Object v = value();
-            Object nv = XmlSerializer.parseSimple(text, v != null ? v.getClass() : declared);
-            if (field != null) field.set(owner, nv); else Array.set(owner, index, nv);
+            setValue(XmlSerializer.parseSimple(text, v != null ? v.getClass() : declared));
         }
 
         @Override
@@ -158,6 +201,7 @@ public class Main extends Application {
             Object v = value();
             if (v == null) return label + " = null";
             Class<?> c = v.getClass();
+            if (v instanceof String) return label + " = \"" + v + "\"";
             if (XmlSerializer.isSimple(c)) return label + " = " + v;
             String t = c.isArray() ? c.getComponentType().getSimpleName() + "[" + Array.getLength(v) + "]"
                     : c.getSimpleName();
@@ -165,16 +209,39 @@ public class Main extends Application {
         }
     }
 
-    /** Ячейка с редактированием простых значений (двойной клик). */
-    static final class PropCell extends TreeCell<Prop> {
+    /** Ячейка: двойной клик правит простое значение, правый клик открывает меню. */
+    final class PropCell extends TreeCell<Prop> {
         private TextField tf;
 
         @Override
         protected void updateItem(Prop p, boolean empty) {
             super.updateItem(p, empty);
-            if (empty || p == null) { setText(null); setGraphic(null); }
-            else if (isEditing()) { setText(null); setGraphic(tf); }
+            if (empty || p == null) {
+                setText(null);
+                setGraphic(null);
+                setContextMenu(null);
+                return;
+            }
+            if (isEditing()) { setText(null); setGraphic(tf); }
             else { setText(p.toString()); setGraphic(null); }
+            setContextMenu(menuFor(p));
+        }
+
+        private ContextMenu menuFor(Prop p) {
+            if (p.owner == null) return null; // корень не меняем
+            ContextMenu m = new ContextMenu();
+            Object v = p.value();
+            if (v != null && !p.declared.isPrimitive()) {
+                MenuItem mi = new MenuItem("Установить null");
+                mi.setOnAction(e -> run(() -> { p.setValue(null); show(current); }));
+                m.getItems().add(mi);
+            }
+            if (v == null && !XmlSerializer.isSimple(p.declared)) {
+                MenuItem mi = new MenuItem(p.declared.isArray() ? "Создать массив..." : "Создать объект...");
+                mi.setOnAction(e -> run(() -> create(p)));
+                m.getItems().add(mi);
+            }
+            return m.getItems().isEmpty() ? null : m;
         }
 
         @Override
